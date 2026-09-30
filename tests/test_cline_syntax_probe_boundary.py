@@ -82,6 +82,18 @@ def test_unsafe_managed_root_never_starts_node(tmp_path, monkeypatch) -> None:
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node is not installed")
 @pytest.mark.parametrize("source,ok", [("module.exports = {};", True), ("function broken( {", False)])
 def test_real_node_checks_managed_source_without_executing_it(tmp_path, monkeypatch, source, ok) -> None:
+    # Separate cold runtime startup from the bounded syntax-only check.
+    node = shutil.which("node")
+    assert node is not None
+    startup = subprocess.run(
+        [node, "--version"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        env=cline_plugin_probe.isolated_hook_environment(),
+    )
+    assert startup.returncode == 0
     context = _context(tmp_path, monkeypatch)
     path = cline_plugin.cline_plugin_root(context) / "index.js"
     path.parent.mkdir(parents=True)
@@ -90,5 +102,8 @@ def test_real_node_checks_managed_source_without_executing_it(tmp_path, monkeypa
     path.write_text(prelude + source, encoding="utf-8")
     _write_state(context, str(path))
 
-    assert cline_plugin.cline_plugin_syntax_probe(context)["ok"] is ok
+    result = cline_plugin.cline_plugin_syntax_probe(context)
+    assert "return_code" in result, result
+    assert result["ok"] is ok, result
+    assert (result["return_code"] == 0) is ok, result
     assert not marker.exists()
