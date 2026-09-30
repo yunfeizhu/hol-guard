@@ -114,6 +114,7 @@ def test_critical_daemon_liveness_does_not_wait_for_locked_storage(
 def test_locked_storage_hook_burst_fails_safe_without_stranding_daemon(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     def empty_inventory(_home: Path) -> list[tuple[int, int]]:
         return []
@@ -126,8 +127,8 @@ def test_locked_storage_hook_burst_fails_safe_without_stranding_daemon(
     store = GuardStore(tmp_path / "guard-home")
     daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
     daemon.start()
-    blocker = sqlite3.connect(store.path, timeout=0.1, isolation_level=None)
-    _ = blocker.execute("begin exclusive")
+    request.addfinalizer(daemon.stop)
+    blocker = sqlite3.connect(store.path, timeout=2.0, isolation_level=None)
     endpoint = (
         f"http://127.0.0.1:{daemon.port}/v1/hooks/pi?guard-home={store.guard_home}&home={tmp_path}&workspace={tmp_path}"
     )
@@ -152,6 +153,7 @@ def test_locked_storage_hook_burst_fails_safe_without_stranding_daemon(
         return _open_json(request, timeout_seconds=hook_timeout_seconds)
 
     try:
+        _ = blocker.execute("begin exclusive")
         with ThreadPoolExecutor(max_workers=24) as executor:
             futures = [executor.submit(review, index) for index in range(24)]
             health, health_elapsed = _open_json(f"http://127.0.0.1:{daemon.port}/healthz")
@@ -165,19 +167,16 @@ def test_locked_storage_hook_burst_fails_safe_without_stranding_daemon(
         blocker.rollback()
         blocker.close()
 
-    try:
-        assert daemon._server.hook_process_runner.wait_for_capacity(  # pyright: ignore[reportPrivateUsage]
-            minimum_workers=1,
-            timeout_seconds=15,
-        )
-        worker_stats = daemon._server.hook_process_runner.stats()  # pyright: ignore[reportPrivateUsage]
-        resumed_payload, resumed_elapsed = review(100)
-        assert worker_stats["timeouts"] == 0
-        assert worker_stats["ready"] >= 1
-        assert resumed_payload.get("policy_action") in {"allow", "warn"}
-        assert resumed_elapsed < 1.0
-    finally:
-        daemon.stop()
+    assert daemon._server.hook_process_runner.wait_for_capacity(  # pyright: ignore[reportPrivateUsage]
+        minimum_workers=1,
+        timeout_seconds=15,
+    )
+    worker_stats = daemon._server.hook_process_runner.stats()  # pyright: ignore[reportPrivateUsage]
+    resumed_payload, resumed_elapsed = review(100)
+    assert worker_stats["timeouts"] == 0
+    assert worker_stats["ready"] >= 1
+    assert resumed_payload.get("policy_action") in {"allow", "warn"}
+    assert resumed_elapsed < 1.0
 
 
 def test_runtime_heartbeat_writer_coalesces_pending_updates() -> None:

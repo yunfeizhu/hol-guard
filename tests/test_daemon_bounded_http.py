@@ -214,6 +214,8 @@ def test_bounded_server_recovers_after_client_abort() -> None:
 
 def test_bounded_server_returns_fast_retryable_overload(monkeypatch) -> None:
     monkeypatch.setenv("HOL_GUARD_DAEMON_MAX_ACTIVE_REQUESTS", "2")
+    # Historical process-wide metrics from other servers do not describe this fixture.
+    monkeypatch.setattr(bounded_http, "_METRICS", bounded_http._Metrics())
     _Handler.release.clear()
     _Handler.entered.clear()
     _Handler.two_holds.clear()
