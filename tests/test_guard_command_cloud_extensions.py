@@ -249,10 +249,17 @@ def test_executable_matcher_builder_preserves_options_and_matches_commands() -> 
             "--instance-ids i-123 --dry-run --no-cli-pager"
         )
     )
-    assert not matcher.match(
+    # Unknown options must not hide an otherwise matched destructive action.
+    assert matcher.match(
         parse_shell_command(
             "aws --region eu-west-1 --profile prod ec2 terminate-instances "
             "--instance-ids i-123 --dry-run --unknown-option"
+        )
+    )
+    assert not matcher.match(
+        parse_shell_command(
+            "aws --region eu-west-1 --profile prod ec2 terminate-instances "
+            "--instance-ids i-123 --dry-run --no-dry-run"
         )
     )
 
